@@ -282,35 +282,48 @@ func TestProducerConsumerLogs(t *testing.T) {
 			ent.NewStandardInstrumentationScopes(),
 		),
 	} {
-		t.Run(fmt.Sprint("logs/", idx), func(t *testing.T) {
-			logs := dg.Generate(10, time.Minute)
+		for _, logs64 := range []bool{true, false} {
+			t.Run(fmt.Sprintf("logs/%d, logs64=%t", idx, logs64), func(t *testing.T) {
+				logs := dg.Generate(10, time.Minute)
 
-			// Check memory leak issue.
-			pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
-			defer pool.AssertSize(t, 0)
+				// Check memory leak issue.
+				pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+				defer pool.AssertSize(t, 0)
 
-			producer := NewProducerWithOptions(config.WithAllocator(pool))
-			defer func() {
-				if err := producer.Close(); err != nil {
-					t.Error("unexpected fail", err)
+				producerOpts := []config.Option{
+					config.WithAllocator(pool),
 				}
-			}()
+				if logs64 {
+					producerOpts = append(producerOpts, config.WithLogs64Builder())
+				}
+				producer := NewProducerWithOptions(producerOpts...)
+				defer func() {
+					if err := producer.Close(); err != nil {
+						t.Error("unexpected fail", err)
+					}
+				}()
 
-			batch, err := producer.BatchArrowRecordsFromLogs(logs)
-			require.NoError(t, err)
-			require.Equal(t, arrowpb.ArrowPayloadType_LOGS, batch.ArrowPayloads[0].Type)
+				batch, err := producer.BatchArrowRecordsFromLogs(logs)
+				require.NoError(t, err)
+				require.Equal(t, arrowpb.ArrowPayloadType_LOGS, batch.ArrowPayloads[0].Type)
 
-			consumer := NewConsumer()
-			received, err := consumer.LogsFrom(batch)
-			require.NoError(t, err)
-			require.Equal(t, 1, len(received))
+				var consumerOpts []Option
+				if logs64 {
+					consumerOpts = append(consumerOpts, WithLogs64())
+				}
+				consumer := NewConsumer(consumerOpts...)
+				received, err := consumer.LogsFrom(batch)
+				require.NoError(t, err)
+				require.Equal(t, 1, len(received))
 
-			assert.Equiv(
-				stdTesting,
-				[]json.Marshaler{plogotlp.NewExportRequestFromLogs(logs)},
-				[]json.Marshaler{plogotlp.NewExportRequestFromLogs(received[0])},
-			)
-		})
+				assert.Equiv(
+					stdTesting,
+					[]json.Marshaler{plogotlp.NewExportRequestFromLogs(logs)},
+					[]json.Marshaler{plogotlp.NewExportRequestFromLogs(received[0])},
+				)
+			})
+		}
+
 	}
 }
 

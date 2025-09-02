@@ -39,6 +39,12 @@ func UnsignedFromRecord[unsigned constraints.Unsigned](record arrow.Record, fiel
 			} else {
 				return unsigned(dict.Value(arr.GetValueIndex(row))), nil
 			}
+		case *array.Uint64:
+			if arr.IsNull(row) {
+				return 0, nil
+			} else {
+				return unsigned(dict.Value(arr.GetValueIndex(row))), nil
+			}
 		default:
 			return 0, werror.WrapWithMsg(ErrInvalidArrayType, fmt.Sprintf("dictionary of type %T is unsupported", dict))
 		}
@@ -229,6 +235,35 @@ func NullableU32FromRecord(record arrow.Record, fieldID int, row int) (*uint32, 
 		}
 	default:
 		return nil, werror.WrapWithMsg(ErrInvalidArrayType, "not a uint32 array")
+	}
+}
+
+// NullableU64FromRecord returns the uint64 value for a specific row and column in an
+// Arrow record. If the value is null, it returns nil.
+func NullableU64FromRecord(record arrow.Record, fieldID int, row int) (*uint64, error) {
+	if fieldID == AbsentFieldID {
+		return nil, nil
+	}
+
+	arr := record.Column(fieldID)
+	if arr == nil {
+		return nil, nil
+	}
+
+	if arr.IsNull(row) {
+		return nil, nil
+	}
+
+	switch arr := arr.(type) {
+	case *array.Uint64:
+		if arr.IsNull(row) {
+			return nil, nil
+		} else {
+			val := arr.Value(row)
+			return &val, nil
+		}
+	default:
+		return nil, werror.WrapWithMsg(ErrInvalidArrayType, "not a uint64 array")
 	}
 }
 

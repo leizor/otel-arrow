@@ -256,6 +256,218 @@ func LogsFrom(record arrow.Record, relatedData *RelatedData) (plog.Logs, error) 
 	return logs, nil
 }
 
+// Logs64From creates a [plog.Logs] from the given Logs64 Arrow Record.
+//
+// Important Note: This function doesn't take ownership of the record, so the
+// record must be released by the caller.
+func Logs64From(record arrow.Record, relatedData *RelatedData64) (plog.Logs, error) {
+	logs := plog.NewLogs()
+
+	if relatedData == nil {
+		return logs, werror.Wrap(otlp.ErrMissingRelatedData)
+	}
+
+	logRecordIDs, err := SchemaToIDs(record.Schema())
+	if err != nil {
+		return logs, werror.Wrap(err)
+	}
+
+	var resLogs plog.ResourceLogs
+	var scopeLogsSlice plog.ScopeLogsSlice
+	var logRecordSlice plog.LogRecordSlice
+
+	resLogsSlice := logs.ResourceLogs()
+	rows := int(record.NumRows())
+
+	prevResID := None
+	prevScopeID := None
+
+	var resID uint64
+	var scopeID uint64
+
+	for row := 0; row < rows; row++ {
+		// Process resource logs, resource, schema url (resource)
+		resDeltaID, err := otlp.Resource64IDFromRecord(record, row, logRecordIDs.Resource)
+		resID += resDeltaID
+		if err != nil {
+			return logs, werror.Wrap(err)
+		}
+		if prevResID != int(resID) {
+			prevResID = int(resID)
+			resLogs = resLogsSlice.AppendEmpty()
+			scopeLogsSlice = resLogs.ScopeLogs()
+			prevScopeID = None
+			schemaUrl, err := otlp.UpdateResource64FromRecord(resLogs.Resource(), record, row, logRecordIDs.Resource, relatedData.ResAttrMapStore)
+			if err != nil {
+				return logs, werror.Wrap(err)
+			}
+			resLogs.SetSchemaUrl(schemaUrl)
+		}
+
+		// Process scope logs, scope, schema url (scope)
+		scopeDeltaID, err := otlp.Scope64IDFromRecord(record, row, logRecordIDs.Scope)
+		scopeID += scopeDeltaID
+		if err != nil {
+			return logs, werror.Wrap(err)
+		}
+		if prevScopeID != int(scopeID) {
+			prevScopeID = int(scopeID)
+			scopeLogs := scopeLogsSlice.AppendEmpty()
+			logRecordSlice = scopeLogs.LogRecords()
+			if err = otlp.UpdateScope64FromRecord(scopeLogs.Scope(), record, row, logRecordIDs.Scope, relatedData.ScopeAttrMapStore); err != nil {
+				return logs, werror.Wrap(err)
+			}
+
+			schemaUrl, err := arrowutils.StringFromRecord(record, logRecordIDs.SchemaUrl, row)
+			if err != nil {
+				return logs, werror.Wrap(err)
+			}
+			scopeLogs.SetSchemaUrl(schemaUrl)
+		}
+
+		// Process log record fields
+		logRecord := logRecordSlice.AppendEmpty()
+		deltaID, err := arrowutils.NullableU64FromRecord(record, logRecordIDs.ID, row)
+		if err != nil {
+			return logs, werror.Wrap(err)
+		}
+
+		timeUnixNano, err := arrowutils.TimestampFromRecord(record, logRecordIDs.TimeUnixNano, row)
+		if err != nil {
+			return logs, werror.WrapWithContext(err, map[string]interface{}{"row": row})
+		}
+		observedTimeUnixNano, err := arrowutils.TimestampFromRecord(record, logRecordIDs.ObservedTimeUnixNano, row)
+		if err != nil {
+			return logs, werror.WrapWithContext(err, map[string]interface{}{"row": row})
+		}
+
+		traceID, err := arrowutils.FixedSizeBinaryFromRecord(record, logRecordIDs.TraceID, row)
+		if err != nil {
+			return logs, werror.WrapWithContext(err, map[string]interface{}{"row": row})
+		}
+		if traceID != nil && len(traceID) != 16 {
+			return logs, werror.WrapWithContext(common.ErrInvalidTraceIDLength, map[string]interface{}{"row": row, "traceID": traceID})
+		}
+		spanID, err := arrowutils.FixedSizeBinaryFromRecord(record, logRecordIDs.SpanID, row)
+		if err != nil {
+			return logs, werror.WrapWithContext(err, map[string]interface{}{"row": row})
+		}
+		if spanID != nil && len(spanID) != 8 {
+			return logs, werror.WrapWithContext(common.ErrInvalidSpanIDLength, map[string]interface{}{"row": row, "spanID": spanID})
+		}
+
+		severityNumber, err := arrowutils.I32FromRecord(record, logRecordIDs.SeverityNumber, row)
+		if err != nil {
+			return logs, werror.WrapWithContext(err, map[string]interface{}{"row": row})
+		}
+		severityText, err := arrowutils.StringFromRecord(record, logRecordIDs.SeverityText, row)
+		if err != nil {
+			return logs, werror.WrapWithContext(err, map[string]interface{}{"row": row})
+		}
+
+		// Read the body value based on the body type
+		bodyStruct, err := arrowutils.StructFromRecord(record, logRecordIDs.Body, row)
+		if err != nil {
+			return logs, werror.WrapWithContext(err, map[string]interface{}{"row": row})
+		}
+
+		if bodyStruct != nil {
+			// If there is a body struct, read the body type and value
+			bodyType, err := arrowutils.U8FromStruct(bodyStruct, row, logRecordIDs.BodyType)
+			if err != nil {
+				return logs, werror.Wrap(err)
+			}
+			body := logRecord.Body()
+			switch pcommon.ValueType(bodyType) {
+			case pcommon.ValueTypeStr:
+				v, err := arrowutils.StringFromStruct(bodyStruct, row, logRecordIDs.BodyStr)
+				if err != nil {
+					return logs, werror.Wrap(err)
+				}
+				body.SetStr(v)
+			case pcommon.ValueTypeInt:
+				v, err := arrowutils.I64FromStruct(bodyStruct, row, logRecordIDs.BodyInt)
+				if err != nil {
+					return logs, werror.Wrap(err)
+				}
+				body.SetInt(v)
+			case pcommon.ValueTypeDouble:
+				v, err := arrowutils.F64FromStruct(bodyStruct, row, logRecordIDs.BodyDouble)
+				if err != nil {
+					return logs, werror.Wrap(err)
+				}
+				body.SetDouble(v)
+			case pcommon.ValueTypeBool:
+				v, err := arrowutils.BoolFromStruct(bodyStruct, row, logRecordIDs.BodyBool)
+				if err != nil {
+					return logs, werror.Wrap(err)
+				}
+				body.SetBool(v)
+			case pcommon.ValueTypeBytes:
+				v, err := arrowutils.BinaryFromStruct(bodyStruct, row, logRecordIDs.BodyBytes)
+				if err != nil {
+					return logs, werror.Wrap(err)
+				}
+				body.SetEmptyBytes().FromRaw(v)
+			case pcommon.ValueTypeSlice:
+				v, err := arrowutils.BinaryFromStruct(bodyStruct, row, logRecordIDs.BodySer)
+				if err != nil {
+					return logs, werror.Wrap(err)
+				}
+				if err = common.Deserialize(v, body); err != nil {
+					return logs, werror.Wrap(err)
+				}
+			case pcommon.ValueTypeMap:
+				v, err := arrowutils.BinaryFromStruct(bodyStruct, row, logRecordIDs.BodySer)
+				if err != nil {
+					return logs, werror.Wrap(err)
+				}
+				if err = common.Deserialize(v, body); err != nil {
+					return logs, werror.Wrap(err)
+				}
+			default:
+				// silently ignore unknown types to avoid DOS attacks
+			}
+		}
+
+		logRecordAttrs := logRecord.Attributes()
+
+		if deltaID != nil {
+			ID := relatedData.LogRecordIDFromDelta(*deltaID)
+			attrs := relatedData.LogRecordAttrMapStore.AttributesByID(ID)
+			if attrs != nil {
+				attrs.CopyTo(logRecordAttrs)
+			}
+		}
+
+		droppedAttributesCount, err := arrowutils.U32FromRecord(record, logRecordIDs.DropAttributesCount, row)
+		if err != nil {
+			return logs, werror.WrapWithContext(err, map[string]interface{}{"row": row})
+		}
+
+		flags, err := arrowutils.U32FromRecord(record, logRecordIDs.Flags, row)
+		if err != nil {
+			return logs, werror.WrapWithContext(err, map[string]interface{}{"row": row})
+		}
+
+		var tid pcommon.TraceID
+		var sid pcommon.SpanID
+		copy(tid[:], traceID)
+		copy(sid[:], spanID)
+
+		logRecord.SetTimestamp(pcommon.Timestamp(timeUnixNano))
+		logRecord.SetObservedTimestamp(pcommon.Timestamp(observedTimeUnixNano))
+		logRecord.SetTraceID(tid)
+		logRecord.SetSpanID(sid)
+		logRecord.SetSeverityNumber(plog.SeverityNumber(severityNumber))
+		logRecord.SetSeverityText(severityText)
+		logRecord.SetDroppedAttributesCount(droppedAttributesCount)
+		logRecord.SetFlags(plog.LogRecordFlags(flags))
+	}
+
+	return logs, nil
+}
+
 func SchemaToIDs(schema *arrow.Schema) (*LogRecordIDs, error) {
 	ID, _ := arrowutils.FieldIDFromSchema(schema, constants.ID)
 	resourceIDs, err := otlp.NewResourceIdsFromSchema(schema)

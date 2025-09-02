@@ -266,9 +266,9 @@ func (rb *RecordBuilderExt) UpdateSchema() {
 	// be very expensive when the number of reusable dictionary entries is not
 	// an important percentage of the existing dictionary.
 	// ToDo Find a way to identify when it makes sense to use dictionary migration between schema changes.
-	//if err := rb.copyDictValuesTo(rb.recordBuilder, newRecBuilder); err != nil {
+	// if err := rb.copyDictValuesTo(rb.recordBuilder, newRecBuilder); err != nil {
 	//	panic(err)
-	//}
+	// }
 
 	rb.recordBuilder.Release()
 	rb.recordBuilder = newRecBuilder
@@ -617,6 +617,13 @@ func (rb *RecordBuilderExt) Uint32DeltaBuilder(name string) *Uint32DeltaBuilder 
 	} else {
 		return NewUint32DeltaBuilder(nil, transformNode, rb.updateRequest)
 	}
+}
+
+func (rb *RecordBuilderExt) Uint64DeltaBuilder(name string) *Uint64DeltaBuilder {
+	_, transformNode := rb.protoDataTypeAndTransformNode(name)
+	b := rb.builder(name)
+
+	return NewUint64DeltaBuilder(b, transformNode, rb.updateRequest)
 }
 
 // Int32Builder returns a Int32Builder wrapper for the field with the given

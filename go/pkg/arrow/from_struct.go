@@ -24,6 +24,13 @@ func U16FromStruct(structArr *array.Struct, row int, fieldID int) (uint16, error
 	return U16FromArray(structArr.Field(fieldID), row)
 }
 
+func U64FromStruct(structArr *array.Struct, row int, fieldID int) (uint64, error) {
+	if fieldID == AbsentFieldID {
+		return 0, nil
+	}
+	return U64FromArray(structArr.Field(fieldID), row)
+}
+
 // NullableU16FromStruct returns a reference to an uint16 value for a specific
 // row in an Arrow struct or nil if the field doesn't exist.
 func NullableU16FromStruct(structArr *array.Struct, row int, fieldID int) (*uint16, error) {
@@ -34,6 +41,22 @@ func NullableU16FromStruct(structArr *array.Struct, row int, fieldID int) (*uint
 		return nil, nil
 	}
 	val, err := U16FromArray(structArr.Field(fieldID), row)
+	if err != nil {
+		return nil, err
+	}
+	return &val, nil
+}
+
+// NullableU64FromStruct returns a reference to an uint64 value for a specific
+// row in an Arrow struct or nil if the field doesn't exist.
+func NullableU64FromStruct(structArr *array.Struct, row int, fieldID int) (*uint64, error) {
+	if fieldID == AbsentFieldID {
+		return nil, nil
+	}
+	if structArr.IsNull(row) {
+		return nil, nil
+	}
+	val, err := U64FromArray(structArr.Field(fieldID), row)
 	if err != nil {
 		return nil, err
 	}

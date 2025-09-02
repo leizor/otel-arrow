@@ -85,6 +85,22 @@ var OrderAttrs16ByVariants = map[string]OrderAttrs16By{
 	"type,key,value,parent_id": OrderAttrs16ByTypeKeyValueParentId,
 }
 
+type OrderAttrs64By int8
+
+const (
+	OrderAttrs64ByNothing OrderAttrs64By = iota
+	OrderAttrs64ByParentIdKeyValue
+	OrderAttrs64ByTypeKeyParentIdValue
+	OrderAttrs64ByTypeKeyValueParentId
+)
+
+var OrderAttrs64ByVariants = map[string]OrderAttrs64By{
+	"":                         OrderAttrs64ByNothing,
+	"parent_id,key,value":      OrderAttrs64ByParentIdKeyValue,
+	"type,key,parent_id,value": OrderAttrs64ByTypeKeyParentIdValue,
+	"type,key,value,parent_id": OrderAttrs64ByTypeKeyValueParentId,
+}
+
 type Config struct {
 	Pool memory.Allocator
 
@@ -129,6 +145,8 @@ type Config struct {
 
 	// Observer is the optional observer to use for the producer.
 	Observer observer.ProducerObserver
+
+	Logs64Builder bool
 }
 
 type Option func(*Config)
@@ -329,5 +347,11 @@ func WithObserver(observer observer.ProducerObserver) Option {
 func WithDictResetThreshold(dictResetThreshold float64) Option {
 	return func(cfg *Config) {
 		cfg.DictResetThreshold = dictResetThreshold
+	}
+}
+
+func WithLogs64Builder() Option {
+	return func(cfg *Config) {
+		cfg.Logs64Builder = true
 	}
 }

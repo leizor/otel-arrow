@@ -62,7 +62,7 @@ type (
 
 		// Builder for each OTEL entities
 		metricsBuilder *metricsarrow.MetricsBuilder
-		logsBuilder    *logsarrow.LogsBuilder
+		logsBuilder    logsarrow.LogsBuilderInterface
 		tracesBuilder  *tracesarrow.TracesBuilder
 
 		// Record builder for each OTEL entities
@@ -132,15 +132,6 @@ func NewProducerWithOptions(options ...cfg.Option) *Producer {
 	)
 	metricsRecordBuilder.SetLabel("metrics")
 
-	logsRecordBuilder := builder.NewRecordBuilderExt(
-		conf.Pool,
-		logsarrow.LogsSchema,
-		config.NewDictionary(conf.LimitIndexSize, conf.DictResetThreshold),
-		stats,
-		conf.Observer,
-	)
-	logsRecordBuilder.SetLabel("logs")
-
 	tracesRecordBuilder := builder.NewRecordBuilderExt(
 		conf.Pool,
 		tracesarrow.TracesSchema,
@@ -152,11 +143,6 @@ func NewProducerWithOptions(options ...cfg.Option) *Producer {
 
 	// Entity builders
 	metricsBuilder, err := metricsarrow.NewMetricsBuilder(metricsRecordBuilder, metricsarrow.NewConfig(conf), stats, conf.Observer)
-	if err != nil {
-		panic(err)
-	}
-
-	logsBuilder, err := logsarrow.NewLogsBuilder(logsRecordBuilder, logsarrow.NewConfig(conf), stats, conf.Observer)
 	if err != nil {
 		panic(err)
 	}
@@ -174,6 +160,40 @@ func NewProducerWithOptions(options ...cfg.Option) *Producer {
 	tracesBuilder, err := tracesarrow.NewTracesBuilder(tracesRecordBuilder, traceCfg, stats, conf.Observer)
 	if err != nil {
 		panic(err)
+	}
+
+	var (
+		logsRecordBuilder *builder.RecordBuilderExt
+		logsBuilder       logsarrow.LogsBuilderInterface
+	)
+	if conf.Logs64Builder {
+		logsRecordBuilder = builder.NewRecordBuilderExt(
+			conf.Pool,
+			logsarrow.Logs64Schema,
+			config.NewDictionary(conf.LimitIndexSize, conf.DictResetThreshold),
+			stats,
+			conf.Observer,
+		)
+		logsRecordBuilder.SetLabel("logs")
+
+		logsBuilder, err = logsarrow.NewLogs64Builder(logsRecordBuilder, logsarrow.NewConfig(conf), stats, conf.Observer)
+		if err != nil {
+			panic(err)
+		}
+	} else {
+		logsRecordBuilder = builder.NewRecordBuilderExt(
+			conf.Pool,
+			logsarrow.LogsSchema,
+			config.NewDictionary(conf.LimitIndexSize, conf.DictResetThreshold),
+			stats,
+			conf.Observer,
+		)
+		logsRecordBuilder.SetLabel("logs")
+
+		logsBuilder, err = logsarrow.NewLogsBuilder(logsRecordBuilder, logsarrow.NewConfig(conf), stats, conf.Observer)
+		if err != nil {
+			panic(err)
+		}
 	}
 
 	return &Producer{
@@ -316,7 +336,7 @@ func (p *Producer) MetricsBuilder() *metricsarrow.MetricsBuilder {
 	return p.metricsBuilder
 }
 
-func (p *Producer) LogsBuilder() *logsarrow.LogsBuilder {
+func (p *Producer) LogsBuilder() logsarrow.LogsBuilderInterface {
 	return p.logsBuilder
 }
 

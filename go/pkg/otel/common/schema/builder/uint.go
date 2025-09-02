@@ -362,6 +362,82 @@ func (b *Uint32DeltaBuilder) AppendNull() {
 	}
 }
 
+type Uint64DeltaBuilder struct {
+	builder       array.Builder
+	transformNode *schema.TransformNode
+	updateRequest *update.SchemaUpdateRequest
+
+	// Used to calculate the delta.
+	prev uint64
+	// Used to enforce delta encoding
+	maxDelta uint64
+}
+
+func NewUint64DeltaBuilder(b array.Builder, transformNode *schema.TransformNode, updateReq *update.SchemaUpdateRequest) *Uint64DeltaBuilder {
+	return &Uint64DeltaBuilder{
+		builder:       b,
+		transformNode: transformNode,
+		updateRequest: updateReq,
+		maxDelta:      math.MaxUint64,
+	}
+}
+
+func (b *Uint64DeltaBuilder) SetMaxDelta(delta uint64) {
+	b.maxDelta = delta
+}
+
+func (b *Uint64DeltaBuilder) Append(value uint64) {
+	if b.builder == nil {
+		if b.updateRequest != nil {
+			// If the builder is nil, then the transform node is not optional.
+			b.transformNode.RemoveOptional()
+			b.updateRequest.Inc(&update.NewFieldEvent{FieldName: b.transformNode.Path()})
+			b.updateRequest = nil // No need to report this again.
+		}
+
+		return
+	}
+
+	switch builder := b.builder.(type) {
+	case *array.Uint64Builder:
+		if builder.Len() == 0 {
+			builder.Append(value)
+		} else {
+			if value < b.prev {
+				// Should never happen.
+				panic("value is less than previous value")
+			}
+
+			delta := value - b.prev
+			if delta > b.maxDelta {
+				panic("delta is greater than max delta, consider sorting the data")
+			}
+
+			builder.Append(delta)
+		}
+		b.prev = value
+	case *array.Uint64DictionaryBuilder:
+		if err := builder.Append(value); err != nil {
+			// Should never happen.
+			panic(err)
+		}
+	default:
+		// Should never happen.
+		panic("unknown builder type")
+	}
+}
+
+func (b *Uint64DeltaBuilder) AppendNull() {
+	if b.builder == nil {
+		return
+	}
+
+	if b.builder.Len() == 0 {
+		b.prev = 0
+	}
+	b.builder.AppendNull()
+}
+
 // Uint64Builder is a wrapper around the arrow array builder for uint64.
 type Uint64Builder struct {
 	builder       array.Builder

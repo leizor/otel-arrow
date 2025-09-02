@@ -22,6 +22,13 @@ type (
 		ScopeAttrMapStore     *otlp.AttributesStore[uint16]
 		LogRecordAttrMapStore *otlp.AttributesStore[uint16]
 	}
+
+	RelatedData64 struct {
+		LogRecordID           uint64
+		ResAttrMapStore       *otlp.AttributesStore[uint64]
+		ScopeAttrMapStore     *otlp.AttributesStore[uint64]
+		LogRecordAttrMapStore *otlp.AttributesStore[uint64]
+	}
 )
 
 func NewRelatedData() *RelatedData {
@@ -61,6 +68,59 @@ func RelatedDataFrom(records []*record_message.RecordMessage) (relatedData *Rela
 			}
 		case colarspb.ArrowPayloadType_LOG_ATTRS:
 			err = otlp.AttributesStoreFrom[uint16](record.Record(), relatedData.LogRecordAttrMapStore)
+			if err != nil {
+				return nil, nil, werror.Wrap(err)
+			}
+		case colarspb.ArrowPayloadType_LOGS:
+			if logsRecord != nil {
+				return nil, nil, werror.Wrap(otel.ErrMultipleTracesRecords)
+			}
+			logsRecord = record
+		default:
+			return nil, nil, werror.Wrap(otel.UnknownPayloadType)
+		}
+	}
+
+	return
+}
+
+func NewRelatedData64() *RelatedData64 {
+	return &RelatedData64{
+		ResAttrMapStore:       otlp.NewAttributesStore[uint64](),
+		ScopeAttrMapStore:     otlp.NewAttributesStore[uint64](),
+		LogRecordAttrMapStore: otlp.NewAttributesStore[uint64](),
+	}
+}
+
+func (r *RelatedData64) LogRecordIDFromDelta(delta uint64) uint64 {
+	r.LogRecordID += delta
+	return r.LogRecordID
+}
+
+func RelatedData64From(records []*record_message.RecordMessage) (relatedData *RelatedData64, logsRecord *record_message.RecordMessage, err error) {
+	defer func() {
+		for _, record := range records {
+			record.Record().Release()
+		}
+	}()
+
+	relatedData = NewRelatedData64()
+
+	// Create the attribute map stores for all the attribute records.
+	for _, record := range records {
+		switch record.PayloadType() {
+		case colarspb.ArrowPayloadType_RESOURCE_ATTRS:
+			err = otlp.AttributesStoreFrom[uint64](record.Record(), relatedData.ResAttrMapStore)
+			if err != nil {
+				return nil, nil, werror.Wrap(err)
+			}
+		case colarspb.ArrowPayloadType_SCOPE_ATTRS:
+			err = otlp.AttributesStoreFrom[uint64](record.Record(), relatedData.ScopeAttrMapStore)
+			if err != nil {
+				return nil, nil, werror.Wrap(err)
+			}
+		case colarspb.ArrowPayloadType_LOG_ATTRS:
+			err = otlp.AttributesStoreFrom[uint64](record.Record(), relatedData.LogRecordAttrMapStore)
 			if err != nil {
 				return nil, nil, werror.Wrap(err)
 			}

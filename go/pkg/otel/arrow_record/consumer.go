@@ -90,6 +90,14 @@ type Config struct {
 
 	// from component.TelemetrySettings
 	meterProvider metric.MeterProvider
+
+	logs64 bool
+}
+
+func WithLogs64() Option {
+	return func(cfg *Config) {
+		cfg.logs64 = true
+	}
 }
 
 // WithMemoryLimit configures the Arrow limited memory allocator.
@@ -241,6 +249,24 @@ func (c *Consumer) LogsFrom(bar *colarspb.BatchArrowRecords) ([]plog.Logs, error
 	}
 
 	result := make([]plog.Logs, 0, len(records))
+
+	if c.logs64 {
+		relatedData, logsRecord, err := logsotlp.RelatedData64From(records)
+		if err != nil {
+			return nil, werror.Wrap(err)
+		}
+
+		if logsRecord != nil {
+			logs, err := logsotlp.Logs64From(logsRecord.Record(), relatedData)
+			if err != nil {
+				return nil, werror.Wrap(err)
+			}
+
+			result = append(result, logs)
+		}
+
+		return result, nil
+	}
 
 	// Compute all related records (i.e. Attributes)
 	relatedData, logsRecord, err := logsotlp.RelatedDataFrom(records)

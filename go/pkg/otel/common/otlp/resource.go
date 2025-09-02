@@ -72,10 +72,51 @@ func UpdateResourceFromRecord(r pcommon.Resource, record arrow.Record, row int, 
 	return
 }
 
+func UpdateResource64FromRecord(r pcommon.Resource, record arrow.Record, row int, resIds *ResourceIds, attrsStore *AttributesStore[uint64]) (schemaUrl string, err error) {
+	resArr, err := arrowutils.StructFromRecord(record, resIds.Resource, row)
+	if err != nil {
+		return "", werror.WrapWithContext(err, map[string]interface{}{"row": row})
+	}
+
+	// Read schema url
+	schemaUrl, err = arrowutils.StringFromStruct(resArr, row, resIds.SchemaUrl)
+	if err != nil {
+		return "", werror.WrapWithContext(err, map[string]interface{}{"row": row})
+	}
+
+	// Read dropped attributes count
+	droppedAttributesCount, err := arrowutils.U32FromStruct(resArr, row, resIds.DroppedAttributesCount)
+	if err != nil {
+		return "", werror.WrapWithContext(err, map[string]interface{}{"row": row})
+	}
+	r.SetDroppedAttributesCount(droppedAttributesCount)
+
+	// Read attributes
+	ID, err := arrowutils.NullableU64FromStruct(resArr, row, resIds.ID)
+	if err != nil {
+		return "", werror.WrapWithContext(err, map[string]interface{}{"row": row})
+	}
+	if ID != nil {
+		attrs := attrsStore.AttributesByDeltaID(*ID)
+		if attrs != nil {
+			attrs.CopyTo(r.Attributes())
+		}
+	}
+	return
+}
+
 func ResourceIDFromRecord(record arrow.Record, row int, resIDs *ResourceIds) (uint16, error) {
 	resStruct, err := arrowutils.StructFromRecord(record, resIDs.Resource, row)
 	if err != nil {
 		return 0, err
 	}
 	return arrowutils.U16FromStruct(resStruct, row, resIDs.ID)
+}
+
+func Resource64IDFromRecord(record arrow.Record, row int, resIDs *ResourceIds) (uint64, error) {
+	resStruct, err := arrowutils.StructFromRecord(record, resIDs.Resource, row)
+	if err != nil {
+		return 0, err
+	}
+	return arrowutils.U64FromStruct(resStruct, row, resIDs.ID)
 }

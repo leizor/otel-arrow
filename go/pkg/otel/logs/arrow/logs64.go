@@ -1,17 +1,9 @@
-/*
- * Copyright The OpenTelemetry Authors
- * SPDX-License-Identifier: Apache-2.0
- */
-
 package arrow
 
 import (
 	"math"
 
 	"github.com/apache/arrow-go/v18/arrow"
-	"go.opentelemetry.io/collector/pdata/pcommon"
-	"go.opentelemetry.io/collector/pdata/plog"
-
 	"github.com/open-telemetry/otel-arrow/go/pkg/otel/common"
 	acommon "github.com/open-telemetry/otel-arrow/go/pkg/otel/common/arrow"
 	"github.com/open-telemetry/otel-arrow/go/pkg/otel/common/schema"
@@ -19,15 +11,18 @@ import (
 	"github.com/open-telemetry/otel-arrow/go/pkg/otel/constants"
 	"github.com/open-telemetry/otel-arrow/go/pkg/otel/observer"
 	"github.com/open-telemetry/otel-arrow/go/pkg/otel/stats"
+	"github.com/open-telemetry/otel-arrow/go/pkg/record_message"
 	"github.com/open-telemetry/otel-arrow/go/pkg/werror"
+	"go.opentelemetry.io/collector/pdata/pcommon"
+	"go.opentelemetry.io/collector/pdata/plog"
 )
 
 var (
-	// LogsSchema is the Arrow schema for the OTLP Arrow Logs record.
-	LogsSchema = arrow.NewSchema([]arrow.Field{
-		{Name: constants.ID, Type: arrow.PrimitiveTypes.Uint16, Metadata: schema.Metadata(schema.Optional, schema.DeltaEncoding), Nullable: true},
-		{Name: constants.Resource, Type: acommon.ResourceDT, Metadata: schema.Metadata(schema.Optional)},
-		{Name: constants.Scope, Type: acommon.ScopeDT, Metadata: schema.Metadata(schema.Optional)},
+	// Logs64Schema is an Arrow schema for OTLP Arrow Logs records that use Uint64 as ID fields.
+	Logs64Schema = arrow.NewSchema([]arrow.Field{
+		{Name: constants.ID, Type: arrow.PrimitiveTypes.Uint64, Metadata: schema.Metadata(schema.Optional, schema.DeltaEncoding), Nullable: true},
+		{Name: constants.Resource, Type: acommon.Resource64DT, Metadata: schema.Metadata(schema.Optional)},
+		{Name: constants.Scope, Type: acommon.Scope64DT, Metadata: schema.Metadata(schema.Optional)},
 		// This schema URL applies to the span and span events (the schema URL
 		// for the resource is in the resource struct).
 		{Name: constants.SchemaUrl, Type: arrow.BinaryTypes.String, Metadata: schema.Metadata(schema.Optional, schema.Dictionary8)},
@@ -51,16 +46,89 @@ var (
 	}, nil)
 )
 
-// LogsBuilder is a helper to build a list of resource logs.
-type LogsBuilder struct {
+type RelatedData64 struct {
+	relatedRecordsManager *acommon.RelatedRecordsManager
+	attrsBuilders         *Attrs64Builders
+}
+
+func NewRelatedData64(cfg *Config, stats *stats.ProducerStats, observer observer.ProducerObserver) *RelatedData64 {
+	rr := acommon.NewRelatedRecordsManager(cfg.Global, stats)
+
+	resource := rr.Declare(acommon.PayloadTypes.ResourceAttrs, acommon.PayloadTypes.Logs, acommon.AttrsSchema64, func(b *builder.RecordBuilderExt) acommon.RelatedRecordBuilder {
+		return acommon.NewAttrs64Builder(b, acommon.PayloadTypes.ResourceAttrs, cfg.Attrs64.Resource.Sorter)
+	}, observer)
+
+	scope := rr.Declare(acommon.PayloadTypes.ScopeAttrs, acommon.PayloadTypes.Logs, acommon.AttrsSchema64, func(b *builder.RecordBuilderExt) acommon.RelatedRecordBuilder {
+		return acommon.NewAttrs64Builder(b, acommon.PayloadTypes.ScopeAttrs, cfg.Attrs64.Scope.Sorter)
+	}, observer)
+
+	logRecord := rr.Declare(acommon.PayloadTypes.LogRecordAttrs, acommon.PayloadTypes.Logs, acommon.AttrsSchema64, func(b *builder.RecordBuilderExt) acommon.RelatedRecordBuilder {
+		return acommon.NewAttrs64Builder(b, acommon.PayloadTypes.LogRecordAttrs, cfg.Attrs64.Log.Sorter)
+	}, observer)
+
+	return &RelatedData64{
+		relatedRecordsManager: rr,
+		attrsBuilders: &Attrs64Builders{
+			resource:  resource.(*acommon.Attrs64Builder),
+			scope:     scope.(*acommon.Attrs64Builder),
+			logRecord: logRecord.(*acommon.Attrs64Builder),
+		},
+	}
+}
+
+func (r *RelatedData64) Schemas() []acommon.SchemaWithPayload {
+	return r.relatedRecordsManager.Schemas()
+}
+
+func (r *RelatedData64) Release() {
+	r.relatedRecordsManager.Release()
+}
+
+func (r *RelatedData64) AttrsBuilders() *Attrs64Builders {
+	return r.attrsBuilders
+}
+
+func (r *RelatedData64) RecordBuilderExt(payloadType *acommon.PayloadType) *builder.RecordBuilderExt {
+	return r.relatedRecordsManager.RecordBuilderExt(payloadType)
+}
+
+func (r *RelatedData64) Reset() {
+	r.relatedRecordsManager.Reset()
+}
+
+func (r *RelatedData64) BuildRecordMessages() ([]*record_message.RecordMessage, error) {
+	return r.relatedRecordsManager.BuildRecordMessages()
+}
+
+type Attrs64Builders struct {
+	resource  *acommon.Attrs64Builder
+	scope     *acommon.Attrs64Builder
+	logRecord *acommon.Attrs64Builder
+}
+
+func (ab *Attrs64Builders) Resource() *acommon.Attrs64Builder {
+	return ab.resource
+}
+
+func (ab *Attrs64Builders) Scope() *acommon.Attrs64Builder {
+	return ab.scope
+}
+
+func (ab *Attrs64Builders) LogRecord() *acommon.Attrs64Builder {
+	return ab.logRecord
+}
+
+// Logs64Builder is a helper to build a list of resource logs. It differs from LogsBuilder in that it
+// uses uint64 instead of uint16 for ID fields.
+type Logs64Builder struct {
 	released bool
 
 	builder *builder.RecordBuilderExt // Record builder
 
-	rb    *acommon.ResourceBuilder        // `resource` builder
-	scb   *acommon.ScopeBuilder           // `scope` builder
+	rb    *acommon.Resource64Builder      // `resource` builder
+	scb   *acommon.Scope64Builder         // `scope` builder
 	sschb *builder.StringBuilder          // scope `schema_url` builder
-	ib    *builder.Uint16DeltaBuilder     //  id builder
+	ib    *builder.Uint64DeltaBuilder     //  id builder
 	tub   *builder.TimestampBuilder       // `time_unix_nano` builder
 	otub  *builder.TimestampBuilder       // `observed_time_unix_nano` builder
 	tidb  *builder.FixedSizeBinaryBuilder // `trace_id` builder
@@ -83,33 +151,19 @@ type LogsBuilder struct {
 	optimizer *LogsOptimizer
 	analyzer  *LogsAnalyzer
 
-	relatedData *RelatedData
+	relatedData *RelatedData64
 }
 
-type LogsBuilderInterface interface { // TODO(leizor): Rename
-	Append(plog.Logs) error
-	Build() (arrow.Record, error)
-	RelatedData() RelatedDataInterface
-	Release()
-}
-
-// NewLogsBuilder creates a new LogsBuilder.
-//
-// Important Note: The recordBuilder parameter will not be released by this
-// LogsBuilder as it's shared with other instances of log builders.
-func NewLogsBuilder(
+func NewLogs64Builder(
 	recordBuilder *builder.RecordBuilderExt,
 	cfg *Config,
 	stats *stats.ProducerStats,
 	observer observer.ProducerObserver,
-) (*LogsBuilder, error) {
+) (*Logs64Builder, error) {
 	var optimizer *LogsOptimizer
 	var analyzer *LogsAnalyzer
 
-	relatedData, err := NewRelatedData(cfg, stats, observer)
-	if err != nil {
-		panic(err)
-	}
+	relatedData := NewRelatedData64(cfg, stats, observer)
 
 	if stats.SchemaStats {
 		optimizer = NewLogsOptimizer(cfg.Log.Sorter)
@@ -118,30 +172,26 @@ func NewLogsBuilder(
 		optimizer = NewLogsOptimizer(cfg.Log.Sorter)
 	}
 
-	b := &LogsBuilder{
-		released:    false,
+	b := &Logs64Builder{
 		builder:     recordBuilder,
 		optimizer:   optimizer,
 		analyzer:    analyzer,
 		relatedData: relatedData,
 	}
-
-	if err := b.init(); err != nil {
-		return nil, werror.Wrap(err)
-	}
+	b.init()
 
 	return b, nil
 }
 
-func (b *LogsBuilder) init() error {
-	ib := b.builder.Uint16DeltaBuilder(constants.ID)
+func (b *Logs64Builder) init() {
+	ib := b.builder.Uint64DeltaBuilder(constants.ID)
 	// As the attributes are sorted before insertion, the delta between two
 	// consecutive attributes ID should always be <=1.
 	ib.SetMaxDelta(1)
 
 	b.ib = ib
-	b.rb = acommon.ResourceBuilderFrom(b.builder.StructBuilder(constants.Resource))
-	b.scb = acommon.ScopeBuilderFrom(b.builder.StructBuilder(constants.Scope))
+	b.rb = acommon.Resource64BuilderFrom(b.builder.StructBuilder(constants.Resource))
+	b.scb = acommon.Scope64BuilderFrom(b.builder.StructBuilder(constants.Scope))
 	b.sschb = b.builder.StringBuilder(constants.SchemaUrl)
 
 	b.tub = b.builder.TimestampBuilder(constants.TimeUnixNano)
@@ -162,11 +212,9 @@ func (b *LogsBuilder) init() error {
 
 	b.dacb = b.builder.Uint32Builder(constants.DroppedAttributesCount)
 	b.fb = b.builder.Uint32Builder(constants.Flags)
-
-	return nil
 }
 
-func (b *LogsBuilder) RelatedData() RelatedDataInterface {
+func (b *Logs64Builder) RelatedData() RelatedDataInterface {
 	return b.relatedData
 }
 
@@ -174,24 +222,22 @@ func (b *LogsBuilder) RelatedData() RelatedDataInterface {
 //
 // Once the array is no longer needed, Release() must be called to free the
 // memory allocated by the record.
-func (b *LogsBuilder) Build() (record arrow.Record, err error) {
+func (b *Logs64Builder) Build() (record arrow.Record, err error) {
 	if b.released {
 		return nil, werror.Wrap(acommon.ErrBuilderAlreadyReleased)
 	}
 
 	record, err = b.builder.NewRecord()
 	if err != nil {
-		initErr := b.init()
-		if initErr != nil {
-			err = werror.Wrap(initErr)
-		}
+		// Only error is if schema needs updating; if that's the case, re-initialize.
+		b.init()
 	}
 
 	return
 }
 
 // Append appends a new set of resource logs to the builder.
-func (b *LogsBuilder) Append(logs plog.Logs) (err error) {
+func (b *Logs64Builder) Append(logs plog.Logs) (err error) {
 	if b.released {
 		return werror.Wrap(acommon.ErrBuilderAlreadyReleased)
 	}
@@ -204,11 +250,11 @@ func (b *LogsBuilder) Append(logs plog.Logs) (err error) {
 
 	attrsAccu := b.relatedData.AttrsBuilders().LogRecord().Accumulator()
 
-	logID := uint16(0)
+	logID := uint64(0)
 	resLogID := -1
 	scopeLogID := -1
-	resID := int64(-1)
-	scopeID := int64(-1)
+	resID := uint64(math.MaxUint64)
+	scopeID := uint64(math.MaxUint64)
 
 	b.builder.Reserve(len(optimLogs.Logs))
 
@@ -234,13 +280,13 @@ func (b *LogsBuilder) Append(logs plog.Logs) (err error) {
 			resLogID = logRec.ResScope.ResourceLogsID
 			resID++
 			err = b.relatedData.AttrsBuilders().Resource().Accumulator().
-				AppendWithID(uint16(resID), resAttrs)
+				AppendWithID(resID, resAttrs)
 			if err != nil {
 				return werror.Wrap(err)
 			}
 		}
 		// Check resID validity
-		if resID == -1 || resID > math.MaxUint16 {
+		if resID >= math.MaxUint64 {
 			return werror.WrapWithContext(acommon.ErrInvalidResourceID, map[string]interface{}{
 				"resource_id": resID,
 			})
@@ -259,13 +305,13 @@ func (b *LogsBuilder) Append(logs plog.Logs) (err error) {
 			scopeLogID = logRec.ResScope.ScopeLogsID
 			scopeID++
 			err = b.relatedData.AttrsBuilders().scope.Accumulator().
-				AppendWithID(uint16(scopeID), scopeAttrs)
+				AppendWithID(scopeID, scopeAttrs)
 			if err != nil {
 				return werror.Wrap(err)
 			}
 		}
 		// Check scopeID validity
-		if scopeID == -1 || scopeID > math.MaxUint16 {
+		if scopeID >= math.MaxUint64 {
 			return werror.WrapWithContext(acommon.ErrInvalidScopeID, map[string]interface{}{
 				"scope_id": scopeID,
 			})
@@ -415,7 +461,7 @@ func (b *LogsBuilder) Append(logs plog.Logs) (err error) {
 }
 
 // Release releases the memory allocated by the builder.
-func (b *LogsBuilder) Release() {
+func (b *Logs64Builder) Release() {
 	if !b.released {
 		// b.builder is a shared resource => not released here
 
@@ -424,6 +470,6 @@ func (b *LogsBuilder) Release() {
 	}
 }
 
-func (b *LogsBuilder) ShowSchema() {
+func (b *Logs64Builder) ShowSchema() {
 	b.builder.ShowSchema()
 }

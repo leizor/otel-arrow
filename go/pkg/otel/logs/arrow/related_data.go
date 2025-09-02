@@ -15,6 +15,12 @@ import (
 	"github.com/open-telemetry/otel-arrow/go/pkg/record_message"
 )
 
+type RelatedDataInterface interface { // TODO(leizor): Rename
+	Reset()
+	BuildRecordMessages() ([]*record_message.RecordMessage, error)
+	RecordBuilderExt(payloadType *carrow.PayloadType) *builder.RecordBuilderExt
+}
+
 type (
 	// RelatedData is a collection of related/dependent data to log record
 	// entities.

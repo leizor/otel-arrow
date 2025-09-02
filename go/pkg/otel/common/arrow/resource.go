@@ -16,12 +16,33 @@ import (
 	"github.com/open-telemetry/otel-arrow/go/pkg/werror"
 )
 
-// ResourceDT is the Arrow Data Type describing a resource.
 var (
+	// ResourceDT is the Arrow Data Type describing a resource.
 	ResourceDT = arrow.StructOf([]arrow.Field{
 		{
 			Name:     constants.ID,
 			Type:     arrow.PrimitiveTypes.Uint16,
+			Metadata: schema.Metadata(schema.DeltaEncoding),
+			Nullable: true,
+		},
+		{
+			Name:     constants.SchemaUrl,
+			Type:     arrow.BinaryTypes.String,
+			Metadata: schema.Metadata(schema.Dictionary8),
+			Nullable: true,
+		},
+		{
+			Name:     constants.DroppedAttributesCount,
+			Type:     arrow.PrimitiveTypes.Uint32,
+			Nullable: true,
+		},
+	}...)
+
+	// Resource64DT is the Arrow Data Type describing a resource.
+	Resource64DT = arrow.StructOf([]arrow.Field{
+		{
+			Name:     constants.ID,
+			Type:     arrow.PrimitiveTypes.Uint64,
 			Metadata: schema.Metadata(schema.DeltaEncoding),
 			Nullable: true,
 		},
@@ -97,6 +118,71 @@ func (b *ResourceBuilder) Build() (*array.Struct, error) {
 
 // Release releases the memory allocated by the builder.
 func (b *ResourceBuilder) Release() {
+	if !b.released {
+		b.builder.Release()
+
+		b.released = true
+	}
+}
+
+// Resource64Builder is an Arrow builder for resources.
+type Resource64Builder struct {
+	released bool
+
+	rBuilder *builder.RecordBuilderExt
+
+	builder *builder.StructBuilder      // `resource` builder
+	aib     *builder.Uint64DeltaBuilder // attributes id builder
+	schb    *builder.StringBuilder      // `schema_url` builder
+	dacb    *builder.Uint32Builder      // `dropped_attributes_count` field builder
+}
+
+// Resource64BuilderFrom creates a new resource builder from an existing struct builder.
+func Resource64BuilderFrom(builder *builder.StructBuilder) *Resource64Builder {
+	aib := builder.Uint64DeltaBuilder(constants.ID)
+	// As the attributes are sorted before insertion, the delta between two
+	// consecutive attributes ID should always be <=1.
+	// We are enforcing this constraint to make sure that the delta encoding
+	// will always be used efficiently.
+	aib.SetMaxDelta(1)
+
+	return &Resource64Builder{
+		released: false,
+		builder:  builder,
+		aib:      aib,
+		schb:     builder.StringBuilder(constants.SchemaUrl),
+		dacb:     builder.Uint32Builder(constants.DroppedAttributesCount),
+	}
+}
+
+func (b *Resource64Builder) Append(resID uint64, resource pcommon.Resource, schemaUrl string) error {
+	if b.released {
+		return werror.Wrap(ErrBuilderAlreadyReleased)
+	}
+
+	return b.builder.Append(resource, func() error {
+		b.aib.Append(resID)
+		b.schb.AppendNonEmpty(schemaUrl)
+		b.dacb.AppendNonZero(resource.DroppedAttributesCount())
+		return nil
+	})
+}
+
+// Build builds the resource array struct.
+//
+// Once the array is no longer needed, Release() must be called to free the
+// memory allocated by the array.
+func (b *Resource64Builder) Build() (*array.Struct, error) {
+	if b.released {
+		return nil, werror.Wrap(ErrBuilderAlreadyReleased)
+	}
+
+	defer b.Release()
+	return b.builder.NewStructArray(), nil
+}
+
+// Release releases the memory allocated by the builder.
+func (b *Resource64Builder) Release() {
 	if !b.released {
 		b.builder.Release()
 

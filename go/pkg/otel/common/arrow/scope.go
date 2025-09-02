@@ -16,10 +16,18 @@ import (
 	"github.com/open-telemetry/otel-arrow/go/pkg/werror"
 )
 
-// ScopeDT is the Arrow Data Type describing a scope.
 var (
+	// ScopeDT is the Arrow Data Type describing a scope.
 	ScopeDT = arrow.StructOf([]arrow.Field{
 		{Name: constants.ID, Type: arrow.PrimitiveTypes.Uint16, Metadata: acommon.Metadata(acommon.DeltaEncoding), Nullable: true},
+		{Name: constants.Name, Type: arrow.BinaryTypes.String, Metadata: acommon.Metadata(acommon.Dictionary8), Nullable: true},
+		{Name: constants.Version, Type: arrow.BinaryTypes.String, Metadata: acommon.Metadata(acommon.Dictionary8), Nullable: true},
+		{Name: constants.DroppedAttributesCount, Type: arrow.PrimitiveTypes.Uint32, Nullable: true},
+	}...)
+
+	// Scope64DT is the Arrow Data Type describing a scope.
+	Scope64DT = arrow.StructOf([]arrow.Field{
+		{Name: constants.ID, Type: arrow.PrimitiveTypes.Uint64, Metadata: acommon.Metadata(acommon.DeltaEncoding), Nullable: true},
 		{Name: constants.Name, Type: arrow.BinaryTypes.String, Metadata: acommon.Metadata(acommon.Dictionary8), Nullable: true},
 		{Name: constants.Version, Type: arrow.BinaryTypes.String, Metadata: acommon.Metadata(acommon.Dictionary8), Nullable: true},
 		{Name: constants.DroppedAttributesCount, Type: arrow.PrimitiveTypes.Uint32, Nullable: true},
@@ -82,6 +90,69 @@ func (b *ScopeBuilder) Build() (*array.Struct, error) {
 
 // Release releases the memory allocated by the builder.
 func (b *ScopeBuilder) Release() {
+	if !b.released {
+		b.builder.Release()
+
+		b.released = true
+	}
+}
+
+type Scope64Builder struct {
+	released bool
+	builder  *builder.StructBuilder
+	nb       *builder.StringBuilder      // Name builder
+	vb       *builder.StringBuilder      // Version builder
+	aib      *builder.Uint64DeltaBuilder // attributes id builder
+	dacb     *builder.Uint32Builder      // Dropped attributes count builder
+}
+
+// Scope64BuilderFrom creates a new instrumentation scope array builder from an existing struct builder.
+func Scope64BuilderFrom(sb *builder.StructBuilder) *Scope64Builder {
+	aib := sb.Uint64DeltaBuilder(constants.ID)
+	// As the attributes are sorted before insertion, the delta between two
+	// consecutive attributes ID should always be <=1.
+	// We are enforcing this constraint to make sure that the delta encoding
+	// will always be used efficiently.
+	aib.SetMaxDelta(1)
+	return &Scope64Builder{
+		released: false,
+		builder:  sb,
+		nb:       sb.StringBuilder(constants.Name),
+		vb:       sb.StringBuilder(constants.Version),
+		aib:      aib,
+		dacb:     sb.Uint32Builder(constants.DroppedAttributesCount),
+	}
+}
+
+func (b *Scope64Builder) Append(scopeID uint64, scope pcommon.InstrumentationScope) error {
+	if b.released {
+		return werror.Wrap(ErrBuilderAlreadyReleased)
+	}
+
+	return b.builder.Append(scope, func() error {
+		b.nb.AppendNonEmpty(scope.Name())
+		b.vb.AppendNonEmpty(scope.Version())
+		b.aib.Append(scopeID)
+		b.dacb.AppendNonZero(scope.DroppedAttributesCount())
+		return nil
+	})
+}
+
+// Build builds the instrumentation scope array struct.
+//
+// Once the array is no longer needed, Release() must be called to free the
+// memory allocated by the array.
+func (b *Scope64Builder) Build() (*array.Struct, error) {
+	if b.released {
+		return nil, werror.Wrap(ErrBuilderAlreadyReleased)
+	}
+
+	defer b.Release()
+	return b.builder.NewStructArray(), nil
+}
+
+// Release releases the memory allocated by the builder.
+func (b *Scope64Builder) Release() {
 	if !b.released {
 		b.builder.Release()
 

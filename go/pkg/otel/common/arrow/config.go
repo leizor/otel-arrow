@@ -13,4 +13,8 @@ type (
 	Attrs32Config struct {
 		Sorter Attrs32Sorter
 	}
+
+	Attrs64Config struct {
+		Sorter Attrs64Sorter
+	}
 )

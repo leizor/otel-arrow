@@ -81,11 +81,58 @@ func UpdateScopeFromRecord(
 	return nil
 }
 
+func UpdateScope64FromRecord(
+	s pcommon.InstrumentationScope,
+	record arrow.Record,
+	row int,
+	ids *ScopeIds,
+	attrsStore *AttributesStore[uint64],
+) error {
+	scopeArray, err := arrowutils.StructFromRecord(record, ids.Scope, row)
+	if err != nil {
+		return werror.WrapWithContext(err, map[string]interface{}{"row": row})
+	}
+	name, err := arrowutils.StringFromStruct(scopeArray, row, ids.Name)
+	if err != nil {
+		return werror.WrapWithContext(err, map[string]interface{}{"row": row})
+	}
+	version, err := arrowutils.StringFromStruct(scopeArray, row, ids.Version)
+	if err != nil {
+		return werror.WrapWithContext(err, map[string]interface{}{"row": row})
+	}
+	droppedAttributesCount, err := arrowutils.U32FromStruct(scopeArray, row, ids.DroppedAttributesCount)
+	if err != nil {
+		return werror.WrapWithContext(err, map[string]interface{}{"row": row})
+	}
+
+	ID, err := arrowutils.NullableU64FromStruct(scopeArray, row, ids.ID)
+	if err != nil {
+		return werror.WrapWithContext(err, map[string]interface{}{"row": row})
+	}
+	if ID != nil {
+		attrs := attrsStore.AttributesByDeltaID(*ID)
+		if attrs != nil {
+			attrs.CopyTo(s.Attributes())
+		}
+	}
+	s.SetName(name)
+	s.SetVersion(version)
+	s.SetDroppedAttributesCount(droppedAttributesCount)
+	return nil
+}
+
 func ScopeIDFromRecord(record arrow.Record, row int, IDs *ScopeIds) (uint16, error) {
 	scopeStruct, err := arrowutils.StructFromRecord(record, IDs.Scope, row)
 	if err != nil {
 		return 0, err
 	}
 	return arrowutils.U16FromStruct(scopeStruct, row, IDs.ID)
+}
 
+func Scope64IDFromRecord(record arrow.Record, row int, IDs *ScopeIds) (uint64, error) {
+	scopeStruct, err := arrowutils.StructFromRecord(record, IDs.Scope, row)
+	if err != nil {
+		return 0, err
+	}
+	return arrowutils.U64FromStruct(scopeStruct, row, IDs.ID)
 }

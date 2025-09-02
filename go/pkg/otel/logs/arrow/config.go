@@ -18,14 +18,21 @@ type (
 	Config struct {
 		Global *cfg.Config
 
-		Log   *LogConfig
-		Attrs *AttrsConfig
+		Log     *LogConfig
+		Attrs   *AttrsConfig
+		Attrs64 *Attrs64Config
 	}
 
 	AttrsConfig struct {
 		Resource *arrow.Attrs16Config
 		Scope    *arrow.Attrs16Config
 		Log      *arrow.Attrs16Config
+	}
+
+	Attrs64Config struct {
+		Resource *arrow.Attrs64Config
+		Scope    *arrow.Attrs64Config
+		Log      *arrow.Attrs64Config
 	}
 
 	LogConfig struct {
@@ -54,6 +61,17 @@ func NewConfig(globalConf *cfg.Config) *Config {
 				Sorter: arrow.SortAttrs16ByTypeKeyValueParentId(),
 			},
 		},
+		Attrs64: &Attrs64Config{
+			Resource: &arrow.Attrs64Config{
+				Sorter: arrow.SortAttrs64ByTypeKeyValueParentId(),
+			},
+			Scope: &arrow.Attrs64Config{
+				Sorter: arrow.SortAttrs64ByTypeKeyValueParentId(),
+			},
+			Log: &arrow.Attrs64Config{
+				Sorter: arrow.SortAttrs64ByTypeKeyValueParentId(),
+			},
+		},
 	}
 }
 
@@ -72,6 +90,17 @@ func NewNoSortConfig(globalConf *cfg.Config) *Config {
 			},
 			Log: &arrow.Attrs16Config{
 				Sorter: arrow.UnsortedAttrs16(),
+			},
+		},
+		Attrs64: &Attrs64Config{
+			Resource: &arrow.Attrs64Config{
+				Sorter: arrow.UnsortedAttrs64(),
+			},
+			Scope: &arrow.Attrs64Config{
+				Sorter: arrow.UnsortedAttrs64(),
+			},
+			Log: &arrow.Attrs64Config{
+				Sorter: arrow.UnsortedAttrs64(),
 			},
 		},
 	}

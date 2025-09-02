@@ -131,6 +131,13 @@ func (sb *StructBuilder) Uint32DeltaBuilder(name string) *Uint32DeltaBuilder {
 	}
 }
 
+func (sb *StructBuilder) Uint64DeltaBuilder(name string) *Uint64DeltaBuilder {
+	uint64Builder := sb.getBuilder(name)
+	_, transformNode := sb.protoDataTypeAndTransformNode(name)
+
+	return NewUint64DeltaBuilder(uint64Builder, transformNode, sb.updateRequest)
+}
+
 // Uint64Builder returns a Uint64Builder for the given field name.
 func (sb *StructBuilder) Uint64Builder(name string) *Uint64Builder {
 	uint64Builder := sb.getBuilder(name)
